@@ -1,76 +1,51 @@
 #!/bin/bash
 
-# Exit the script on any error
-set -e
-
+# Update the system and install unzip
 echo "Updating system packages..."
-sudo apt update -y
-sudo apt install unzip wget -y
+sudo apt update && sudo apt upgrade -y
+sudo apt install unzip -y
 
-echo "Downloading Loki binary..."
-wget https://github.com/grafana/loki/releases/download/v2.9.0/loki-linux-amd64.zip
+# Fetch the latest Loki version
+echo "Fetching latest Loki version..."
+LOKI_VERSION=$(curl -s "https://api.github.com/repos/grafana/loki/releases/latest" | grep -Po '"tag_name": "v\K[0-9.]+')
 
-echo "Extracting Loki..."
+# Download Loki binary
+echo "Downloading Loki v${LOKI_VERSION}..."
+wget https://github.com/grafana/loki/releases/download/v${LOKI_VERSION}/loki-linux-amd64.zip
+
+# Unzip the Loki binary and move it to /usr/local/bin
+echo "Installing Loki..."
 unzip loki-linux-amd64.zip
-
-echo "Moving Loki to /usr/local/bin/..."
 sudo mv loki-linux-amd64 /usr/local/bin/loki
-sudo chmod +x /usr/local/bin/loki
+sudo chmod a+x /usr/local/bin/loki
 
-echo "Creating Loki configuration file..."
-sudo tee /etc/loki-local-config.yaml > /dev/null << EOF
-auth_enabled: false
-server:
-  http_listen_port: 3100
-ingester:
-  lifecycler:
-    ring:
-      kvstore:
-        store: inmemory
-      replication_factor: 1
-schema_config:
-  configs:
-    - from: 2022-01-01
-      store: boltdb-shipper
-      object_store: filesystem
-      schema: v11
-      index:
-        prefix: index_
-        period: 24h
-storage_config:
-  boltdb_shipper:
-    active_index_directory: /tmp/loki/boltdb-shipper-active
-    cache_location: /tmp/loki/boltdb-shipper-cache
-    shared_store: filesystem
-  filesystem:
-    directory: /tmp/loki/chunks
-limits_config:
-  enforce_metric_name: false
-  reject_old_samples: true
-  reject_old_samples_max_age: 168h
-EOF
+# Download the Loki configuration file
+echo "Downloading Loki configuration file..."
+sudo wget -O /etc/loki-local-config.yaml https://raw.githubusercontent.com/grafana/loki/main/cmd/loki/loki-local-config.yaml
 
-echo "Creating systemd service file for Loki..."
-sudo tee /etc/systemd/system/loki.service > /dev/null << EOF
+# Create the Loki systemd service file
+echo "Creating Loki systemd service..."
+sudo bash -c 'cat > /etc/systemd/system/loki.service << EOF
 [Unit]
-Description=Loki Log Aggregation System
+Description=Loki log aggregation system
 After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/loki -config.file=/etc/loki-local-config.yaml
-Restart=on-failure
+Restart=always
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOF'
 
-echo "Reloading systemd daemon..."
+# Reload systemd, start and enable the Loki service
+echo "Starting and enabling Loki service..."
 sudo systemctl daemon-reload
+sudo systemctl start loki.service
+sudo systemctl enable loki.service
 
-echo "Starting Loki service..."
-sudo systemctl start loki
+# Check Loki service status
+echo "Loki installation completed. Checking service status..."
+sudo systemctl status loki.service
 
-echo "Enabling Loki service to start on boot..."
-sudo systemctl enable loki
-
-echo "Loki installation and setup completed successfully!"
+echo "Loki is now installed and running!"
