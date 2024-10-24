@@ -1,29 +1,32 @@
 #!/bin/bash
 
-# Exit the script on any error
-set -e
-
+# Update system and install necessary packages
 echo "Updating system packages..."
-sudo apt update -y
-sudo apt install unzip wget -y
+sudo apt update && sudo apt upgrade -y
+sudo apt install unzip -y
 
-echo "Downloading Promtail binary..."
-wget https://github.com/grafana/loki/releases/download/v2.9.0/promtail-linux-amd64.zip
+# Fetch the latest Promtail version
+echo "Fetching latest Promtail version..."
+PROMTAIL_VERSION=$(curl -s "https://api.github.com/repos/grafana/loki/releases/latest" | grep -Po '"tag_name": "v\K[0-9.]+')
 
-echo "Extracting Promtail..."
+# Download Promtail binary
+echo "Downloading Promtail v${PROMTAIL_VERSION}..."
+wget https://github.com/grafana/loki/releases/download/v${PROMTAIL_VERSION}/promtail-linux-amd64.zip
+
+# Unzip and install Promtail
+echo "Installing Promtail..."
 unzip promtail-linux-amd64.zip
-
-echo "Moving Promtail to /usr/local/bin/..."
 sudo mv promtail-linux-amd64 /usr/local/bin/promtail
-sudo chmod +x /usr/local/bin/promtail
+sudo chmod a+x /usr/local/bin/promtail
 
+# Create Promtail configuration file
 echo "Creating Promtail configuration file..."
-sudo tee /etc/promtail-config.yaml > /dev/null << EOF
+sudo bash -c 'cat > /etc/promtail-local-config.yaml << EOF
 server:
   http_listen_port: 9080
 
 positions:
-  filename: /tmp/positions.yaml
+  filename: /var/lib/promtail/positions.yaml
 
 clients:
   - url: http://localhost:3100/loki/api/v1/push
@@ -35,30 +38,32 @@ scrape_configs:
           - localhost
         labels:
           job: varlogs
-          __path__: /var/log/*log
-EOF
+          __path__: /var/log/*.log
+EOF'
 
-echo "Creating systemd service file for Promtail..."
-sudo tee /etc/systemd/system/promtail.service > /dev/null << EOF
+# Create Promtail systemd service file
+echo "Creating Promtail systemd service..."
+sudo bash -c 'cat > /etc/systemd/system/promtail.service << EOF
 [Unit]
-Description=Promtail Log Collector
+Description=Promtail service
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail-config.yaml
-Restart=on-failure
+Type=simple
+ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail-local-config.yaml
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOF'
 
-echo "Reloading systemd daemon..."
+# Reload systemd, start and enable Promtail service
+echo "Starting and enabling Promtail service..."
 sudo systemctl daemon-reload
+sudo systemctl start promtail.service
+sudo systemctl enable promtail.service
 
-echo "Starting Promtail service..."
-sudo systemctl start promtail
+# Check Promtail service status
+echo "Promtail installation completed. Checking service status..."
+sudo systemctl status promtail.service
 
-echo "Enabling Promtail service to start on boot..."
-sudo systemctl enable promtail
-
-echo "Promtail installation and setup completed successfully!"
+echo "Promtail is now installed and running!"
